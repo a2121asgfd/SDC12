@@ -1,0 +1,32 @@
+name: Update Fastest V2Ray Servers
+
+on:
+  workflow_dispatch: # هذا السطر هو الذي يظهر لك زر (Run workflow) للتشغيل اليدوي
+  schedule:
+
+jobs:
+  run-scanner:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          
+      - name: Install Requirements
+        run: pip install requests
+        
+      - name: Run Python Script
+        run: python scanner.py
+        
+      - name: Commit and Push Results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add Best_Servers.txt
+          git commit -m "🚀 Auto-updated fastest servers list" || echo "No changes to commit"
+          git push
