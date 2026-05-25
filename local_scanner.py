@@ -7,155 +7,100 @@ import urllib.parse
 import threading
 import sys
 
-# إعدادات النظام
+# الإعدادات
 found_count = 0
 max_target = 20
-stop_event = threading.Event() # أداة لإيقاف جميع الفحوصات فوراً عند الوصول لـ 20
-lock = threading.Lock() # أداة لتنظيم الطباعة والكتابة في الملف لكي لا تتداخل
-output_file = "NetMod_VIP_Servers.txt"
+stop_event = threading.Event()
+lock = threading.Lock()
+output_file = "NetMod_Final_VIP_Servers.txt"
 
-def print_log(msg):
-    """دالة لطباعة النصوص في الشاشة بشكل منظم دون تداخل"""
-    with lock:
-        print(msg)
+def is_valid_config(url):
+    """فلترة السيرفرات الوهمية (تمنع السيرفرات التي بها UUID صفري)"""
+    try:
+        if "00000000-0000-4000-8000-000000000000" in url:
+            return False
+        return True
+    except:
+        return False
 
 def parse_vless(url):
-    """تفكيك رابط الـ VLESS لاستخراج الـ IP والبورت والـ SNI المستخدم للتخفي"""
     try:
         main_part = url.split("://")[1]
         auth_host_port, rest = main_part.split("?", 1)
-        query_part = rest.split("#")[0] if "#" in rest else rest
-        
         _, host_port = auth_host_port.split("@")
         host, port_str = host_port.split(":")
         port = int(port_str)
-        
-        qs = urllib.parse.parse_qs(query_part)
-        sni = qs.get("sni", [host])[0] # استخراج الـ SNI إن وجد، أو استخدام الـ Host
-        security = qs.get("security", [""])[0]
-        
-        return host, port, sni, security
-    except Exception:
-        return None, None, None, None
+        qs = urllib.parse.parse_qs(rest.split("#")[0])
+        sni = qs.get("sni", [host])[0]
+        return host, port, sni
+    except:
+        return None, None, None
 
-def verify_real_tls(host, port, sni, timeout=3.5):
-    """محاكاة دقيقة وحقيقية لاتصال NetMod لتخطي الحجب المصري"""
-    # 1. فحص الاتصال العادي (هل البورت مفتوح؟)
+def verify_connection(host, port, sni):
+    """فحص مزدوج: TCP ثم TLS"""
     try:
-        sock = socket.create_connection((host, port), timeout=timeout)
-    except socket.timeout:
-        return False, "⏳ Error: TCP Timeout (Server is dead or blocked by DPI)"
-    except ConnectionRefusedError:
-        return False, "🚫 Error: Connection Refused (Port is closed)"
-    except Exception as e:
-        return False, f"❌ Error: Network failure ({str(e)})"
-
-    # 2. فحص التشفير (هل الجدار الناري المصري سيقطع الاتصال عند بدء التشفير؟)
-    try:
+        # 1. فحص TCP
+        sock = socket.create_connection((host, port), timeout=3)
+        # 2. فحص TLS
         context = ssl.create_default_context()
         context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE # نحن فقط نريد التأكد أن التشفير يعمل
-        
-        wrapped_socket = context.wrap_socket(sock, server_hostname=sni)
-        wrapped_socket.do_handshake() # بدء المصافحة المشفرة الحقيقية
-        wrapped_socket.close()
-        return True, "✅ TLS Handshake Success (DPI BYPASSED)"
+        context.verify_mode = ssl.CERT_NONE
+        wrapped = context.wrap_socket(sock, server_hostname=sni)
+        wrapped.do_handshake()
+        wrapped.close()
+        return True, "Success"
     except Exception as e:
-        sock.close()
-        return False, f"🛡️ Error: SSL Handshake Blocked by DPI ({str(e)})"
+        return False, str(e)
 
 def check_server(config):
     global found_count
+    if stop_event.is_set(): return
     
-    # إذا وصلنا لـ 20، تجاهل أي سيرفر جديد واخرج فوراً
-    if stop_event.is_set():
-        return
-        
-    host, port, sni, security = parse_vless(config)
-    
-    if not host:
-        return
-        
-    print_log(f"[*] Scanning -> IP: {host} | Port: {port} | SNI: {sni}...")
-    
-    success, msg = verify_real_tls(host, port, sni)
+    if not is_valid_config(config): return
+
+    host, port, sni = parse_vless(config)
+    if not host: return
+
+    # طباعة لحظية في الـ CMD
+    with lock:
+        print(f"[*] Testing: {host}:{port}")
+
+    success, msg = verify_connection(host, port, sni)
     
     if success:
         with lock:
-            if found_count >= max_target:
-                stop_event.set()
-                return
-            
-            found_count += 1
-            # طباعة السيرفر الناجح بشكل بارز في الشاشة
-            print("\n" + "="*60)
-            print(f"🎉 [WORKING SERVER #{found_count}] Passed Egypt DPI Check!")
-            print(f"🌐 Host: {host}:{port} | SNI: {sni} | Security: {security}")
-            print(f"🔗 Config: {config}")
-            print("="*60 + "\n")
-            
-            # الكتابة الفورية داخل الملف (بوضع a للإضافة أسفل بعض)
-            try:
+            if found_count < max_target:
+                found_count += 1
+                print(f"\n✅ [FOUND #{found_count}] -> {host}:{port}")
                 with open(output_file, "a", encoding="utf-8") as f:
                     f.write(config + "\n")
-            except Exception as e:
-                print(f"[❌ FATAL ERROR] Could not save to TXT file: {e}")
-                
-            # إيقاف البرنامج إذا وصلنا للعدد
-            if found_count >= max_target:
-                print_log(f"\n🏆 TARGET REACHED: 20 Servers Found! Stopping the engine...")
-                stop_event.set()
-    else:
-        # طباعة سبب الفشل لكي تعرف ماذا يحدث خلف الكواليس
-        print_log(f"  [FAILED] {host}:{port} -> {msg}")
-
+                if found_count >= max_target:
+                    stop_event.set()
 
 def main():
-    print("="*70)
-    print("   🚀 PROFESSIONAL EGYPT DPI SCANNER (NetMod Edition)   ")
-    print("="*70)
+    print("="*60)
+    print("   🚀 FINAL NETMOD EGYPT SCANNER (PRO VERSION)   ")
+    print("="*60)
     
-    # تفريغ الملف القديم وبدء ملف جديد نظيف
-    with open(output_file, "w", encoding="utf-8") as f:
-        f.write("")
-        
+    # تنظيف الملف القديم
+    open(output_file, "w").close()
+    
     url = "https://raw.githubusercontent.com/ebrasha/free-v2ray-public-list/refs/heads/main/vless_configs.txt"
-    print("\n📥 Fetching fresh servers from Github...")
+    print("📥 Loading List...")
     try:
-        response = requests.get(url, timeout=10)
-        all_configs = response.text.splitlines()
-    except Exception as e:
-        print(f"❌ Connection Error: {e}")
-        input("Press Enter to exit...")
+        configs = requests.get(url, timeout=10).text.splitlines()
+    except:
+        print("❌ Error loading list.")
         return
 
-    # استخراج السيرفرات المشفرة فقط
-    filtered = []
-    for cfg in all_configs:
-        cfg_lower = cfg.lower().strip()
-        if cfg_lower:
-            # شرط أساسي: التشفير مفعل ولا يوجد None
-            if ("security=tls" in cfg_lower or "security=reality" in cfg_lower) and "security=none" not in cfg_lower:
-                filtered.append(cfg.strip())
+    filtered = [c for c in configs if c.strip() and ("security=tls" in c.lower() or "security=reality" in c.lower())]
+    print(f"💎 Cleaned List: {len(filtered)} potential servers.\n" + "-"*60)
 
-    print(f"💎 Valid Encrypted Servers Found: {len(filtered)}")
-    print(f"⏳ Starting Deep Scan... Target: {max_target} Working Servers.\n")
-    print("-" * 70)
-
-    # تشغيل الفحص
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-        futures = [executor.submit(check_server, cfg) for cfg in filtered]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        executor.map(check_server, filtered)
         
-        # ننتظر حتى ينتهي الفحص أو يتم الوصول للرقم 20 وإعطاء أمر التوقف
-        for future in concurrent.futures.as_completed(futures):
-            if stop_event.is_set():
-                break
-
-    print("\n" + "="*70)
-    print(f"✅ PROCESS COMPLETE! Saved {found_count} Working Servers to:")
-    print(f"📁 {output_file} (Check the folder where this program is running)")
-    print("="*70)
-    input("\n🎯 Press Enter to close...")
+    print(f"\n🎉 Done! {found_count} Valid Servers saved to {output_file}")
+    input("Press Enter to close...")
 
 if __name__ == "__main__":
     main()
