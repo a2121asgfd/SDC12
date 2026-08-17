@@ -1,4 +1,4 @@
-name: GitHub NetMovps
+name: GitHub NetMod vps ah
 
 on:
   workflow_dispatch:
@@ -46,7 +46,7 @@ jobs:
       - name: Start Tunnel & Generate NetMod VMess Link
         shell: powershell
         run: |
-          # تشغيل npx عبر cmd.exe لتفادي خطأ Win32 application
+          # تشغيل npx عبر cmd.exe
           $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npx localtunnel --port 8080" -RedirectStandardOutput "lt.log" -PassThru -NoNewWindow
           
           Start-Sleep -Seconds 12
@@ -57,10 +57,10 @@ jobs:
           if ($logContent -match 'https://([a-zA-Z0-9-]+\.loca\.lt)') {
               $domain = $matches[1]
               
-              # بناء كود VMess المخصص لـ NetMod
+              # بناء كود VMess المخصص مع تضمين speedtest.net كـ Host و SNI
               $vmessJson = @{
                   v    = "2"
-                  ps   = "GitHub-NetMod-Server"
+                  ps   = "GitHub-Speedtest-Server"
                   add  = $domain
                   port = "443"
                   id   = "ad182fa2-8e10-431f-9988-123456789abc"
@@ -68,10 +68,10 @@ jobs:
                   scy  = "auto"
                   net  = "ws"
                   type = "none"
-                  host = $domain
+                  host = "speedtest.net"
                   path = "/"
                   tls  = "tls"
-                  sni  = $domain
+                  sni  = "speedtest.net"
               } | ConvertTo-Json -Compress
               
               $bytes  = [System.Text.Encoding]::UTF8.GetBytes($vmessJson)
@@ -79,7 +79,7 @@ jobs:
               $vmessLink = "vmess://$base64"
               
               Write-Host "====================================================" -ForegroundColor Green
-              Write-Host " [+] READY & WORKING VMESS LINK FOR NETMOD:" -ForegroundColor Yellow
+              Write-Host " [+] READY VMESS LINK WITH SPEEDTEST.NET HOST:" -ForegroundColor Yellow
               Write-Host " $vmessLink" -ForegroundColor Cyan
               Write-Host "====================================================" -ForegroundColor Green
           } else {
