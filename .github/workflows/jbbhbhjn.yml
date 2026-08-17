@@ -1,4 +1,4 @@
-name: GitHub NetMod 12
+name: GitHub NetMod142
 
 on:
   workflow_dispatch:
@@ -11,15 +11,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Xray Core & Install Ngrok
+      - name: Download Xray Core & tmole
         shell: powershell
         run: |
-          # 1. تنزيل Xray Core
+          # تنزيل وفك ضغط Xray Core
           Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath ".\xray" -Force
           
-          # 2. تثبيت Ngrok عبر Chocolatey
-          choco install ngrok -y
+          # تنزيل أداة tmole للأنفاق المباشرة
+          Invoke-WebRequest -Uri "https://i.jpillora.com/tmole-win-amd64.gz" -OutFile "tmole.gz"
+          # فك ضغط tmole
+          $gzipStream = New-Object System.IO.Compression.GZipStream((New-Object System.IO.FileStream("tmole.gz", [System.IO.FileMode]::Open)), [System.IO.Compression.CompressionMode]::Decompress)
+          $outputStream = New-Object System.IO.FileStream("tmole.exe", [System.IO.FileMode]::Create)
+          $gzipStream.CopyTo($outputStream)
+          $outputStream.Close()
+          $gzipStream.Close()
 
       - name: Configure & Start Xray Server
         shell: powershell
@@ -41,29 +47,25 @@ jobs:
           }
           "@
           Set-Content -Path ".\xray\config.json" -Value $xrayConfig
-          
-          # تشغيل Xray في الخلفية
           Start-Process -FilePath ".\xray\xray.exe" -ArgumentList "run -config .\xray\config.json" -NoNewWindow
 
       - name: Start TCP Tunnel & Generate NetMod VMess Link
         shell: powershell
         run: |
-          # تشغيل ngrok لنقل الترافيك المباشر
-          $process = Start-Process -FilePath "ngrok" -ArgumentList "tcp 1080" -PassThru -NoNewWindow
+          # تشغيل tmole وحفظ مخرجات الاتصال
+          $process = Start-Process -FilePath ".\tmole.exe" -ArgumentList "1080" -RedirectStandardOutput "tmole.log" -PassThru -NoNewWindow
           
-          Start-Sleep -Seconds 8
+          Start-Sleep -Seconds 10
           
-          # استخراج عنوان الـ TCP والـ Port المباشر عبر API المحلي لـ Ngrok
-          try {
-              $ngrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-              $publicUrl = $ngrokApi.tunnels[0].public_url
+          $logContent = Get-Content "tmole.log" -Raw
+          
+          # استخراج العنوان والبورت المباشر
+          if ($logContent -match "https?://([^:]+):?(\d+)?") {
+              # في حال تم استخراج الـ Domain والـ Port
+              $domain = $matches[1]
+              $port = if ($matches[2]) { $matches[2] } else { "80" }
               
-              $cleanUrl = $publicUrl -replace 'tcp://', ''
-              $parts = $cleanUrl.Split(':')
-              $domain = $parts[0]
-              $port = $parts[1]
-              
-              # بناء كود VMess متوافق مع NetMod والفحص
+              # بناء كود VMess
               $vmessJson = @{
                   v    = "2"
                   ps   = "GitHub-NetMod-Server"
@@ -88,8 +90,9 @@ jobs:
               Write-Host " [+] READY & WORKING VMESS LINK FOR NETMOD:" -ForegroundColor Yellow
               Write-Host " $vmessLink" -ForegroundColor Cyan
               Write-Host "====================================================" -ForegroundColor Green
-          } catch {
-              Write-Host "[-] Failed to fetch Ngrok tunnel address." -ForegroundColor Red
+          } else {
+              Write-Host "[-] Tunnel Output Logs:" -ForegroundColor Red
+              Write-Host $logContent
           }
 
       - name: Keep Alive
