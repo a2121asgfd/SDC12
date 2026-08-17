@@ -1,4 +1,4 @@
-name: AAA_Testشش_Win 11
+name: AAA_adaTest_Win 11
 
 on:
   workflow_dispatch:
@@ -11,55 +11,82 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Tools & Setup
+      - name: Download Xray & Cloudflared
         shell: powershell
         run: |
+          # 1. تنزيل Cloudflared
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+          
+          # 2. تنزيل وتجهيز Xray Core
+          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
+          Expand-Archive -Path "xray.zip" -DestinationPath ".\xray" -Force
+
+      - name: Configure & Start Xray Server
+        shell: powershell
+        run: |
+          # إنشاء ملف إعدادات Xray يعمل على بورت 8080 وبنفس الـ UUID
+          $xrayConfig = @"
+          {
+            "inbounds": [{
+              "port": 8080,
+              "protocol": "vmess",
+              "settings": {
+                "clients": [{"id": "ad182fa2-8e10-431f-9988-123456789abc", "alterId": 0}]
+              },
+              "streamSettings": {
+                "network": "ws",
+                "wsSettings": {"path": "/"}
+              }
+            }],
+            "outbounds": [{"protocol": "freedom"}]
+          }
+          "@
+          Set-Content -Path ".\xray\config.json" -Value $xrayConfig
+          
+          # تشغيل Xray في الخلفية
+          Start-Process -FilePath ".\xray\xray.exe" -ArgumentList "run -config .\xray\config.json" -NoNewWindow
 
       - name: Start Cloudflare Tunnel & Generate VMess Link
         shell: powershell
         run: |
-          # 1. تشغيل النفق في الخلفية
+          # تشغيل النفق وتوجيهه إلى بورت Xray (8080)
           $process = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080" -PassThru -NoNewWindow -RedirectStandardError "tunnel.log"
           
-          # الانتظار لإنشاء الرابط
-          Start-Sleep -Seconds 10
+          Start-Sleep -Seconds 12
           
-          # 2. استخراج الدومين من السجلات
           $logContent = Get-Content "tunnel.log" -Raw
           if ($logContent -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') {
               $fullUrl = $matches[0]
-              $domain = $fullUrl -replace 'https://', ''
+              $tunnelDomain = $fullUrl -replace 'https://', ''
               
-              # 3. إعداد كائن JSON المخصص لبروتوكول VMess
+              # إعداد JSON برابط VMess يدمج بين IP/Domain النفق وهواست speedtest.net للـ SNI
               $vmessJson = @{
                   v    = "2"
-                  ps   = "Server"
-                  add  = $domain
+                  ps   = "GitHub-Speedtest"
+                  add  = $tunnelDomain
                   port = "443"
                   id   = "ad182fa2-8e10-431f-9988-123456789abc"
                   aid  = "0"
                   scy  = "auto"
                   net  = "ws"
                   type = "none"
-                  host = $domain
+                  host = "speedtest.net"
                   path = "/"
                   tls  = "tls"
-                  sni  = $domain
+                  sni  = "speedtest.net"
               } | ConvertTo-Json -Compress
               
-              # 4. تشفير الـ JSON إلى Base64 لإنشاء رابط VMess الجاهز
+              # التشفير إلى Base64
               $bytes  = [System.Text.Encoding]::UTF8.GetBytes($vmessJson)
               $base64 = [Convert]::ToBase64String($bytes)
               $vmessLink = "vmess://$base64"
               
-              # 5. طباعة الرابط النهائي
               Write-Host "====================================================" -ForegroundColor Green
-              Write-Host " [+] YOUR READY VMESS LINK FOR NETMOD:" -ForegroundColor Yellow
+              Write-Host " [+] READY VMESS LINK WITH SPEEDTEST.NET HOST:" -ForegroundColor Yellow
               Write-Host " $vmessLink" -ForegroundColor Cyan
               Write-Host "====================================================" -ForegroundColor Green
           } else {
-              Write-Host "[-] Failed to extract tunnel domain. Logs:" -ForegroundColor Red
+              Write-Host "[-] Tunnel generation failed. Logs:" -ForegroundColor Red
               Get-Content "tunnel.log"
           }
 
