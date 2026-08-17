@@ -1,4 +1,4 @@
-name: GitHub NetMod aps
+name: GitHub NetMovps
 
 on:
   workflow_dispatch:
@@ -18,13 +18,12 @@ jobs:
           Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath ".\xray" -Force
           
-          # 2. تثبيت localtunnel عبر npm المتاح مجاناً ومباشرة
+          # 2. تثبيت localtunnel
           npm install -g localtunnel
 
       - name: Configure & Start Xray Server
         shell: powershell
         run: |
-          # إعداد Xray ليعمل ببروتوكول VMess عبر WebSocket على بورت 8080
           $xrayConfig = @"
           {
             "inbounds": [{
@@ -47,14 +46,14 @@ jobs:
       - name: Start Tunnel & Generate NetMod VMess Link
         shell: powershell
         run: |
-          # تشغيل localtunnel وتوجيهه لبورت 8080
-          $process = Start-Process -FilePath "npx" -ArgumentList "localtunnel --port 8080" -RedirectStandardOutput "lt.log" -PassThru -NoNewWindow
+          # تشغيل npx عبر cmd.exe لتفادي خطأ Win32 application
+          $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npx localtunnel --port 8080" -RedirectStandardOutput "lt.log" -PassThru -NoNewWindow
           
-          Start-Sleep -Seconds 10
+          Start-Sleep -Seconds 12
           
           $logContent = Get-Content "lt.log" -Raw
           
-          # استخراج النطاق الخاص بـ localtunnel
+          # استخراج النطاق
           if ($logContent -match 'https://([a-zA-Z0-9-]+\.loca\.lt)') {
               $domain = $matches[1]
               
@@ -84,7 +83,7 @@ jobs:
               Write-Host " $vmessLink" -ForegroundColor Cyan
               Write-Host "====================================================" -ForegroundColor Green
           } else {
-              Write-Host "[-] Failed to parse LocalTunnel domain. Logs:" -ForegroundColor Red
+              Write-Host "[-] Failed to parse LocalTunnel domain. Raw output:" -ForegroundColor Red
               Write-Host $logContent
           }
 
