@@ -1,4 +1,4 @@
-name: GitHub NetMod Serverشيسشيس
+name: GitHub NetMod Seشسي
 
 on:
   workflow_dispatch:
@@ -11,21 +11,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Xray Core & Ngrok
+      - name: Download Xray Core & Install Ngrok
         shell: powershell
         run: |
           # 1. تنزيل Xray Core
           Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath ".\xray" -Force
           
-          # 2. تنزيل Ngrok لفتح نفق TCP مباشر بدون حجب DNS
-          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bM52f25NTy5/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-          Expand-Archive -Path "ngrok.zip" -DestinationPath ".\ngrok" -Force
+          # 2. تثبيت Ngrok عبر Chocolatey
+          choco install ngrok -y
 
       - name: Configure & Start Xray Server
         shell: powershell
         run: |
-          # إنشاء إعدادات Xray حقيقية تعمل ببروتوكول VMess على بورت local 1080
+          # إنشاء إعدادات Xray
           $xrayConfig = @"
           {
             "inbounds": [{
@@ -49,23 +48,22 @@ jobs:
       - name: Start TCP Tunnel & Generate NetMod VMess Link
         shell: powershell
         run: |
-          # تشغيل ngrok لنقل الترافيك المباشر (يمكنك إضافة authtoken الخاص بك إن وجد)
-          # .\ngrok\ngrok.exe config add-authtoken YOUR_NGROK_TOKEN
-          $process = Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 1080" -PassThru -NoNewWindow
+          # تشغيل ngrok لنقل الترافيك المباشر
+          $process = Start-Process -FilePath "ngrok" -ArgumentList "tcp 1080" -PassThru -NoNewWindow
           
-          Start-Sleep -Seconds 7
+          Start-Sleep -Seconds 8
           
           # استخراج عنوان الـ TCP والـ Port المباشر عبر API المحلي لـ Ngrok
           try {
               $ngrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-              $publicUrl = $ngrokApi.tunnels[0].public_url # مثال: tcp://0.tcp.ngrok.io:12345
+              $publicUrl = $ngrokApi.tunnels[0].public_url
               
               $cleanUrl = $publicUrl -replace 'tcp://', ''
               $parts = $cleanUrl.Split(':')
               $domain = $parts[0]
               $port = $parts[1]
               
-              # بناء كود VMess متوافق 100% مع NetMod والفحص
+              # بناء كود VMess متوافق مع NetMod والفحص
               $vmessJson = @{
                   v    = "2"
                   ps   = "GitHub-NetMod-Server"
@@ -91,7 +89,7 @@ jobs:
               Write-Host " $vmessLink" -ForegroundColor Cyan
               Write-Host "====================================================" -ForegroundColor Green
           } catch {
-              Write-Host "[-] Failed to fetch Ngrok tunnel address. Make sure Ngrok started properly." -ForegroundColor Red
+              Write-Host "[-] Failed to fetch Ngrok tunnel address." -ForegroundColor Red
           }
 
       - name: Keep Alive
