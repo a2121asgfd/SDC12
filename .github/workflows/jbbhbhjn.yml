@@ -1,7 +1,7 @@
-name: AAA_Test_Win 11
+name: AAA_Test_Winش 11
 
 on:
-  workflow_dispatch: # تفعيل خيار التشغيل اليدوي Run workflow
+  workflow_dispatch:
 
 jobs:
   start-server:
@@ -11,23 +11,42 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1. تثبيت وتشغيل أداة النفق (Cloudflare Tunnel كمثال لفتح بورت)
-      - name: Install & Run Cloudflare Tunnel
+      - name: Download Tools & Setup
         shell: powershell
         run: |
-          Invoke-WebRequest -Uri https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
-          # يمكنك استخدام Token الخاص بنطاقك sg5.taskflowhub.org هنا
-          # Start-Process -FilePath .\cloudflared.exe -ArgumentList "tunnel --no-autoupdate run --token YOUR_TUNNEL_TOKEN" -NoNewWindow
-
-      # 2. تشغيل السيرفر أو السكريبت الخاص بك (Xray / Python / Custom Proxy)
-      - name: Run Server Executable
+          # 1. تنزيل cloudflared
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+          
+          # 2. تنزيل وتجهيز Xray / V2Ray (أو ضع الملفات في المستودع)
+          # سنقوم بتشغيل Cloudflare Quick Tunnel وتوجيهه للـ Localhost
+          
+      - name: Start Cloudflare Tunnel & Print Link
         shell: powershell
         run: |
-          # استبدل هذا الأمر بمسار تشغيل برنامجك
-          # Start-Process -FilePath .\xray.exe -ArgumentList "-config config.json" -NoNewWindow
-          echo "Server is running..."
+          # تشغيل التانل في الخلفية وتوجيه البورت (مثلاً بورت 8080 أو البورت الذي تشغل عليه Proxy)
+          $process = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080" -PassThru -NoNewWindow -RedirectStandardError "tunnel.log"
+          
+          # الانتظار القليل حتى يتم توليد الرابط
+          Start-Sleep -Seconds 10
+          
+          # استخراج الرابط من ملف السجلات وطباعته بشفاهية ووضوح
+          $logContent = Get-Content "tunnel.log" -Raw
+          if ($logContent -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') {
+              $tunnelUrl = $matches[0]
+              $domainOnly = $tunnelUrl -replace 'https://', ''
+              
+              Write-Host "====================================================" -ForegroundColor Green
+              Write-Host " [+] CLOUDFLARE DOMAIN FOR NETMOD (SNI / Host):" -ForegroundColor Yellow
+              Write-Host " $domainOnly" -ForegroundColor Cyan
+              Write-Host "====================================================" -ForegroundColor Green
+              Write-Host " [+] FULL TUNNEL URL:" -ForegroundColor Yellow
+              Write-Host " $tunnelUrl" -ForegroundColor Cyan
+              Write-Host "====================================================" -ForegroundColor Green
+          } else {
+              Write-Host "[-] Tunnel URL not found yet. Check logs below:" -ForegroundColor Red
+              Get-Content "tunnel.log"
+          }
 
-      # 3. إبقاء الـ Runner حياً حتى أقصى حد مسموح (6 ساعات)
       - name: Keep Alive
         shell: powershell
         run: |
