@@ -1,4 +1,4 @@
-name: GitHub NetMod vps ah
+name: GitHub NetMod شسيش1شي
 
 on:
   workflow_dispatch:
@@ -11,15 +11,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Xray Core & Install LocalTunnel
+      - name: Download Xray Core & Cloudflared
         shell: powershell
         run: |
           # 1. تنزيل Xray Core
           Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
           Expand-Archive -Path "xray.zip" -DestinationPath ".\xray" -Force
           
-          # 2. تثبيت localtunnel
-          npm install -g localtunnel
+          # 2. تنزيل cloudflared لنفق ثابت وبدون حماية
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
 
       - name: Configure & Start Xray Server
         shell: powershell
@@ -43,24 +43,24 @@ jobs:
           Set-Content -Path ".\xray\config.json" -Value $xrayConfig
           Start-Process -FilePath ".\xray\xray.exe" -ArgumentList "run -config .\xray\config.json" -NoNewWindow
 
-      - name: Start Tunnel & Generate NetMod VMess Link
+      - name: Start Cloudflare Tunnel & Generate VMess Link
         shell: powershell
         run: |
-          # تشغيل npx عبر cmd.exe
-          $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npx localtunnel --port 8080" -RedirectStandardOutput "lt.log" -PassThru -NoNewWindow
+          # تشغيل cloudflared لتوجيه الترافيك لبورت 8080
+          $process = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080" -RedirectStandardError "cloudflared.log" -PassThru -NoNewWindow
           
           Start-Sleep -Seconds 12
           
-          $logContent = Get-Content "lt.log" -Raw
+          $logContent = Get-Content "cloudflared.log" -Raw
           
-          # استخراج النطاق
-          if ($logContent -match 'https://([a-zA-Z0-9-]+\.loca\.lt)') {
+          # استخراج دومين cloudflare المؤقت
+          if ($logContent -match 'https://([a-zA-Z0-9-]+\.trycloudflare\.com)') {
               $domain = $matches[1]
               
-              # بناء كود VMess المخصص مع تضمين speedtest.net كـ Host و SNI
+              # بناء كود VMess جاهز لـ NetMod مع هوست speedtest.net
               $vmessJson = @{
                   v    = "2"
-                  ps   = "GitHub-Speedtest-Server"
+                  ps   = "GitHub-Cloudflare-Server"
                   add  = $domain
                   port = "443"
                   id   = "ad182fa2-8e10-431f-9988-123456789abc"
@@ -71,7 +71,7 @@ jobs:
                   host = "speedtest.net"
                   path = "/"
                   tls  = "tls"
-                  sni  = "speedtest.net"
+                  sni  = $domain
               } | ConvertTo-Json -Compress
               
               $bytes  = [System.Text.Encoding]::UTF8.GetBytes($vmessJson)
@@ -79,11 +79,11 @@ jobs:
               $vmessLink = "vmess://$base64"
               
               Write-Host "====================================================" -ForegroundColor Green
-              Write-Host " [+] READY VMESS LINK WITH SPEEDTEST.NET HOST:" -ForegroundColor Yellow
+              Write-Host " [+] WORKING VMESS LINK FOR NETMOD:" -ForegroundColor Yellow
               Write-Host " $vmessLink" -ForegroundColor Cyan
               Write-Host "====================================================" -ForegroundColor Green
           } else {
-              Write-Host "[-] Failed to parse LocalTunnel domain. Raw output:" -ForegroundColor Red
+              Write-Host "[-] Failed to fetch Cloudflare domain. Raw Output:" -ForegroundColor Red
               Write-Host $logContent
           }
 
