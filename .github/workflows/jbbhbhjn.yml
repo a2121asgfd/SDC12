@@ -1,4 +1,4 @@
-name: AAA_Test_Winش 11
+name: GitHub NetMod Serverشيسشيس
 
 on:
   workflow_dispatch:
@@ -11,40 +11,87 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Tools & Setup
+      - name: Download Xray Core & Ngrok
         shell: powershell
         run: |
-          # 1. تنزيل cloudflared
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+          # 1. تنزيل Xray Core
+          Invoke-WebRequest -Uri "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip" -OutFile "xray.zip"
+          Expand-Archive -Path "xray.zip" -DestinationPath ".\xray" -Force
           
-          # 2. تنزيل وتجهيز Xray / V2Ray (أو ضع الملفات في المستودع)
-          # سنقوم بتشغيل Cloudflare Quick Tunnel وتوجيهه للـ Localhost
-          
-      - name: Start Cloudflare Tunnel & Print Link
+          # 2. تنزيل Ngrok لفتح نفق TCP مباشر بدون حجب DNS
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bM52f25NTy5/ngrok-v3-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive -Path "ngrok.zip" -DestinationPath ".\ngrok" -Force
+
+      - name: Configure & Start Xray Server
         shell: powershell
         run: |
-          # تشغيل التانل في الخلفية وتوجيه البورت (مثلاً بورت 8080 أو البورت الذي تشغل عليه Proxy)
-          $process = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080" -PassThru -NoNewWindow -RedirectStandardError "tunnel.log"
+          # إنشاء إعدادات Xray حقيقية تعمل ببروتوكول VMess على بورت local 1080
+          $xrayConfig = @"
+          {
+            "inbounds": [{
+              "port": 1080,
+              "protocol": "vmess",
+              "settings": {
+                "clients": [{"id": "ad182fa2-8e10-431f-9988-123456789abc", "alterId": 0}]
+              },
+              "streamSettings": {
+                "network": "tcp"
+              }
+            }],
+            "outbounds": [{"protocol": "freedom"}]
+          }
+          "@
+          Set-Content -Path ".\xray\config.json" -Value $xrayConfig
           
-          # الانتظار القليل حتى يتم توليد الرابط
-          Start-Sleep -Seconds 10
+          # تشغيل Xray في الخلفية
+          Start-Process -FilePath ".\xray\xray.exe" -ArgumentList "run -config .\xray\config.json" -NoNewWindow
+
+      - name: Start TCP Tunnel & Generate NetMod VMess Link
+        shell: powershell
+        run: |
+          # تشغيل ngrok لنقل الترافيك المباشر (يمكنك إضافة authtoken الخاص بك إن وجد)
+          # .\ngrok\ngrok.exe config add-authtoken YOUR_NGROK_TOKEN
+          $process = Start-Process -FilePath ".\ngrok\ngrok.exe" -ArgumentList "tcp 1080" -PassThru -NoNewWindow
           
-          # استخراج الرابط من ملف السجلات وطباعته بشفاهية ووضوح
-          $logContent = Get-Content "tunnel.log" -Raw
-          if ($logContent -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') {
-              $tunnelUrl = $matches[0]
-              $domainOnly = $tunnelUrl -replace 'https://', ''
+          Start-Sleep -Seconds 7
+          
+          # استخراج عنوان الـ TCP والـ Port المباشر عبر API المحلي لـ Ngrok
+          try {
+              $ngrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+              $publicUrl = $ngrokApi.tunnels[0].public_url # مثال: tcp://0.tcp.ngrok.io:12345
+              
+              $cleanUrl = $publicUrl -replace 'tcp://', ''
+              $parts = $cleanUrl.Split(':')
+              $domain = $parts[0]
+              $port = $parts[1]
+              
+              # بناء كود VMess متوافق 100% مع NetMod والفحص
+              $vmessJson = @{
+                  v    = "2"
+                  ps   = "GitHub-NetMod-Server"
+                  add  = $domain
+                  port = $port
+                  id   = "ad182fa2-8e10-431f-9988-123456789abc"
+                  aid  = "0"
+                  scy  = "auto"
+                  net  = "tcp"
+                  type = "none"
+                  host = ""
+                  path = ""
+                  tls  = "none"
+                  sni  = ""
+              } | ConvertTo-Json -Compress
+              
+              $bytes  = [System.Text.Encoding]::UTF8.GetBytes($vmessJson)
+              $base64 = [Convert]::ToBase64String($bytes)
+              $vmessLink = "vmess://$base64"
               
               Write-Host "====================================================" -ForegroundColor Green
-              Write-Host " [+] CLOUDFLARE DOMAIN FOR NETMOD (SNI / Host):" -ForegroundColor Yellow
-              Write-Host " $domainOnly" -ForegroundColor Cyan
+              Write-Host " [+] READY & WORKING VMESS LINK FOR NETMOD:" -ForegroundColor Yellow
+              Write-Host " $vmessLink" -ForegroundColor Cyan
               Write-Host "====================================================" -ForegroundColor Green
-              Write-Host " [+] FULL TUNNEL URL:" -ForegroundColor Yellow
-              Write-Host " $tunnelUrl" -ForegroundColor Cyan
-              Write-Host "====================================================" -ForegroundColor Green
-          } else {
-              Write-Host "[-] Tunnel URL not found yet. Check logs below:" -ForegroundColor Red
-              Get-Content "tunnel.log"
+          } catch {
+              Write-Host "[-] Failed to fetch Ngrok tunnel address. Make sure Ngrok started properly." -ForegroundColor Red
           }
 
       - name: Keep Alive
