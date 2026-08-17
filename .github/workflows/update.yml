@@ -1,31 +1,69 @@
-name: Build EXE Scanner
+name: AAA_Testشش_Win 11
 
 on:
-  workflow_dispatch: # لتشغيله يدوياً بضغطة زر
+  workflow_dispatch:
 
 jobs:
-  build-windows-exe:
-    runs-on: windows-latest # تشغيل خادم ويندوز لإنشاء الـ EXE
-    
+  start-server:
+    runs-on: windows-latest
+
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-        
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install Tools
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Tools & Setup
+        shell: powershell
         run: |
-          pip install requests pyinstaller
-          
-      - name: Compile Script to EXE
+          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "cloudflared.exe"
+
+      - name: Start Cloudflare Tunnel & Generate VMess Link
+        shell: powershell
         run: |
-          pyinstaller --onefile local_scanner.py
+          # 1. تشغيل النفق في الخلفية
+          $process = Start-Process -FilePath ".\cloudflared.exe" -ArgumentList "tunnel --url http://localhost:8080" -PassThru -NoNewWindow -RedirectStandardError "tunnel.log"
           
-      - name: Upload EXE Binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: V2Ray-Egypt-Scanner
-          path: dist/local_scanner.exe
+          # الانتظار لإنشاء الرابط
+          Start-Sleep -Seconds 10
+          
+          # 2. استخراج الدومين من السجلات
+          $logContent = Get-Content "tunnel.log" -Raw
+          if ($logContent -match 'https://[a-zA-Z0-9-]+\.trycloudflare\.com') {
+              $fullUrl = $matches[0]
+              $domain = $fullUrl -replace 'https://', ''
+              
+              # 3. إعداد كائن JSON المخصص لبروتوكول VMess
+              $vmessJson = @{
+                  v    = "2"
+                  ps   = "Server"
+                  add  = $domain
+                  port = "443"
+                  id   = "ad182fa2-8e10-431f-9988-123456789abc"
+                  aid  = "0"
+                  scy  = "auto"
+                  net  = "ws"
+                  type = "none"
+                  host = $domain
+                  path = "/"
+                  tls  = "tls"
+                  sni  = $domain
+              } | ConvertTo-Json -Compress
+              
+              # 4. تشفير الـ JSON إلى Base64 لإنشاء رابط VMess الجاهز
+              $bytes  = [System.Text.Encoding]::UTF8.GetBytes($vmessJson)
+              $base64 = [Convert]::ToBase64String($bytes)
+              $vmessLink = "vmess://$base64"
+              
+              # 5. طباعة الرابط النهائي
+              Write-Host "====================================================" -ForegroundColor Green
+              Write-Host " [+] YOUR READY VMESS LINK FOR NETMOD:" -ForegroundColor Yellow
+              Write-Host " $vmessLink" -ForegroundColor Cyan
+              Write-Host "====================================================" -ForegroundColor Green
+          } else {
+              Write-Host "[-] Failed to extract tunnel domain. Logs:" -ForegroundColor Red
+              Get-Content "tunnel.log"
+          }
+
+      - name: Keep Alive
+        shell: powershell
+        run: |
+          Start-Sleep -Seconds 21600
